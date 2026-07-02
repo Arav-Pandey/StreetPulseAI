@@ -41,12 +41,22 @@ export default function Home({ setActive }: Props) {
             Car Over Speed Limit Heatmap
           </button>
         </div>
-        <div className="bg-blue-600 p-2 w-full text-center text-gray-600">
-          <button className="text-xl" onClick={() => setActive("Live")}>
-            Live Street Analysis
+        <div className="bg-blue-600 p-2 w-full text-center text-black">
+          <button className="text-xl" onClick={() => setActive("LiveCar")}>
+            Live Car Speed
           </button>
         </div>
-        <div className="bg-blue-600 p-2 w-full text-center text-gray-600">
+        <div className="bg-blue-600 p-2 w-full text-center text-black">
+          <button className="text-xl" onClick={() => setActive("LiveBike")}>
+            Live Bike Speed
+          </button>
+        </div>
+        <div className="bg-blue-600 p-2 w-full text-center text-black">
+          <button className="text-xl" onClick={() => setActive("LiveHelmet")}>
+            Live Biker Helmet Detection
+          </button>
+        </div>
+        <div className="bg-blue-600 p-2 w-full text-center text-black">
           <button className="text-xl" onClick={() => setActive("Image")}>
             Image Upload Analysis (PRODUCTION USE ONLY)
           </button>

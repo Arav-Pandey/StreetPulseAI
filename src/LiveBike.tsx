@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import Car from "./assets/Cars.jpg";
+import Car from "./assets/Cars.jpg"; // REMEMBER TO CHANGE TO BIKER VIDEOS INSTEAD JUST HAVEN'T FOUND THEM YET
+import Cars from "./assets/Cars.mp4";
 
-// Tracks both the natural (original) and rendered (displayed) image size
 interface ImgSize {
   naturalWidth: number;
   naturalHeight: number;
@@ -9,15 +9,17 @@ interface ImgSize {
   renderedHeight: number;
 }
 
-export default function Live() {
+export default function LiveBike() {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<any>(null);
   const [imgSize, setImgSize] = useState<ImgSize | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   const prevRef = useRef<{ preds: any[]; time: number } | null>(null);
+  const [currentFrame, setCurrentFrame] = useState<string>(Car);
+  const [refresh, setRefresh] = useState<boolean>(false);
 
   const captureFrame = () => {
     const video = videoRef.current!;
@@ -28,7 +30,6 @@ export default function Live() {
     return canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
   };
 
-  // Capture natural vs rendered dimensions once the image has loaded
   const handleImageLoad = () => {
     const el = imgRef.current;
     if (!el) return;
@@ -42,28 +43,51 @@ export default function Live() {
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
+    let stream: MediaStream;
 
-    navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
+    navigator.mediaDevices.getUserMedia({ video: true }).then((s) => {
+      stream = s;
       if (!videoRef.current) return;
-      videoRef.current.srcObject = stream;
-      videoRef.current.play();
+
+      videoRef.current.src = Cars;
 
       interval = setInterval(async () => {
         try {
-          // Replace:  const imageBase64 = await toBase64(Car);
-          const imageBase64 = captureFrame();
+          const video = videoRef.current;
+          if (!video) return;
 
-          const response = await fetch("/.netlify/functions/roboflow", {
-            /* same as before */
+          // Advance video by 1 frame (1/30th of a second)
+          video.currentTime += 1 / 30;
+
+          // Wait for the video element to complete seeking
+          await new Promise((resolve) => {
+            video.onseeked = resolve;
           });
-          if (!response.ok) return;
-          const result = await response.json();
 
-          // ── Speed calc: add these 10 lines right before setData ──
+          setLoading(true);
+          const imageBase64 = captureFrame();
+          setCurrentFrame(`data:image/jpeg;base64,${imageBase64}`);
+
+          const response = await fetch("/.netlify/functions/roboflowBike", {
+            method: "POST",
+            body: JSON.stringify({ imageBase64 }),
+          });
+
+          const text = await response.text();
+          console.log("Function status:", response.status);
+          console.log("Function body:", text);
+
+          if (!response.ok) return;
+          const result = JSON.parse(text);
+
+          // Speed calculations
           const now = Date.now();
           const preds = result.outputs[0].predictions.predictions;
-          if (prevRef.current) {
-            const dt = (now - prevRef.current.time) / 1000; // seconds
+
+          if (prevRef.current && videoRef.current) {
+            const dt = 1 / 30;
+            const frameHeight = videoRef.current.videoHeight || 1080;
+
             preds.forEach((p: any) => {
               const closest = prevRef.current!.preds.reduce(
                 (best: any, pp: any) =>
@@ -72,23 +96,73 @@ export default function Live() {
                     ? pp
                     : best,
               );
-              p.speed = Math.hypot(p.x - closest.x, p.y - closest.y) / dt;
+
+              // 1. Calculate how far down the screen the vehicle is (0.0 to 1.0)
+              const normalizedY = p.y / frameHeight;
+
+              // 2. Dynamic Scale Factor:
+              // Far away (Top of screen, Y near 0): Fewer pixels per foot (e.g., 4)
+              // Close up (Bottom of screen, Y near 1): More pixels per foot (e.g., 24)
+              // Adjust 4 and 20 below to fine-tune your specific street perspective!
+              const pixelsPerFoot = 4 + normalizedY * 20;
+
+              // 3. Compute distances
+              const pixelDistance = Math.hypot(
+                p.x - closest.x,
+                p.y - closest.y,
+              );
+              const feetDistance = pixelDistance / pixelsPerFoot;
+              const calculatedSpeedFps = feetDistance / dt;
+              const calculatedMph = calculatedSpeedFps / 1.466667;
+
+              // 4. Threshold Filter Gate:
+              // If tracking jumps cleanly (ID mismatch or newborn box), ignore calculation.
+              // Also ignores tiny vibrations where a car is actually fully stopped.
+              if (
+                calculatedMph > 110 ||
+                pixelDistance > 80 ||
+                pixelDistance < 1.5
+              ) {
+                // Fallback: Inherit previous frame's speed or hold average if it's an extreme jump
+                p.speed = closest.speed || null;
+              } else {
+                p.speed = calculatedSpeedFps; // Stores raw FPS units matching your bottom UI rendering
+              }
             });
           }
+
           prevRef.current = { preds, time: now };
-          // ─────────────────────────────────────────────────────────
 
           setData(result);
+          console.log(data);
         } catch (err) {
-          /* same error handling */
+          const errorMessage =
+            err instanceof Error
+              ? err.message
+              : "An unknown network error occurred";
+          console.error("Fetch failure:", errorMessage);
+          setError(errorMessage);
+        } finally {
+          setLoading(false);
         }
-      }, 800); // call Roboflow every 800ms
+      }, 2000);
     });
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      stream?.getTracks().forEach((t) => t.stop());
+    };
   }, []);
 
-  // Recompute scale if the window is resized
+  useEffect(() => {
+    if (refresh) {
+      if (videoRef.current) {
+        videoRef.current.currentTime = 0;
+      }
+      setRefresh(false);
+    }
+  }, [refresh]);
+
   useEffect(() => {
     const onResize = () => {
       const el = imgRef.current;
@@ -107,14 +181,12 @@ export default function Live() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // Derive scale factors (fall back to 1 until image has loaded)
   const scaleX = imgSize ? imgSize.renderedWidth / imgSize.naturalWidth : 1;
   const scaleY = imgSize ? imgSize.renderedHeight / imgSize.naturalHeight : 1;
 
   return (
     <div style={{ padding: "20px" }}>
       {loading && <p>Processing segmentation request...</p>}
-
       {error && (
         <div
           style={{
@@ -128,19 +200,20 @@ export default function Live() {
         </div>
       )}
 
-      <video ref={videoRef} autoPlay muted playsInline />
-      <canvas ref={captureCanvasRef} />
+      <video ref={videoRef} muted playsInline style={{ maxWidth: "100%" }} />
+      <canvas ref={captureCanvasRef} style={{ display: "none" }} />
+      <button onClick={() => setRefresh(true)}>Rewatch Video</button>
+
       {data && (
         <div>
           <h3>Prediction</h3>
-
           <div style={{ position: "relative", display: "inline-block" }}>
             <img
               ref={imgRef}
-              src={Car}
+              src={currentFrame}
               alt="Car"
               className="mb-0 mt-0 p-0"
-              onLoad={handleImageLoad} // ← fires once browser knows rendered size
+              onLoad={handleImageLoad}
             />
 
             {imgSize &&
@@ -150,13 +223,12 @@ export default function Live() {
                     key={i}
                     style={{
                       position: "absolute",
-                      // Apply scale factors to map original coords → rendered coords
                       left: (p.x - p.width / 2) * scaleX,
                       top: (p.y - p.height / 2) * scaleY,
                       width: p.width * scaleX,
                       height: p.height * scaleY,
                       border: "2px solid red",
-                      pointerEvents: "none", // boxes shouldn't intercept mouse events
+                      pointerEvents: "none",
                     }}
                   >
                     <span
@@ -170,7 +242,9 @@ export default function Live() {
                         padding: "1px 4px",
                       }}
                     >
-                      {p.speed != null ? `${Math.round(p.speed)} px/s` : "–"}
+                      {p.speed != null
+                        ? `${Math.round(p.speed / 1.466667)} MPH`
+                        : "–"}
                     </span>
                   </div>
                 ),

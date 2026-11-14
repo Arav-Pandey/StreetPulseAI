@@ -9,7 +9,10 @@ async function getClient() {
   if (!uri) {
     throw new Error("MONGODB_URI is not configured for this Netlify site");
   }
-  const client = new MongoClient(uri);
+  const client = new MongoClient(uri, {
+    serverSelectionTimeoutMS: 5000,
+    connectTimeoutMS: 5000,
+  });
   await client.connect();
   cachedClient = client;
   return client;
@@ -23,7 +26,11 @@ export const handler: Handler = async (event) => {
   try {
     const client = await getClient();
     const db = client.db("streetpulse");
-    const docs = await db.collection("helmetLocations").find({}).toArray();
+    const docs = await db
+      .collection("helmetLocations")
+      .find({})
+      .maxTimeMS(3000)
+      .toArray();
 
     return {
       statusCode: 200,
